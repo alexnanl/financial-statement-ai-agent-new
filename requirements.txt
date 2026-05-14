@@ -1,0 +1,18 @@
+streamlit>=1.32.0
+yfinance>=0.2.40
+pandas>=2.0.0
+openai>=1.30.0
+langgraph>=0.2.0
+typing-extensions>=4.8.0
+matplotlib>=3.8.0
+python-docx>=1.1.0
+markdown>=3.5.0
+Pillow>=10.0.0
+
+# --- PDF generation (3-tier fallback) ---
+# The report writer tries these in order: WeasyPrint -> wkhtmltopdf (via
+# pdfkit) -> reportlab. Installing any one of them enables PDF download;
+# reportlab is pure-Python and always works as the final fallback.
+weasyprint>=60.0          # tier 1 (best HTML/CSS fidelity; needs system libs)
+pdfkit>=1.0.0             # tier 2 (needs the `wkhtmltopdf` binary on PATH)
+reportlab>=4.0.0          # tier 3 (pure-Python, no system deps — always works)
