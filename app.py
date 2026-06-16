@@ -15,6 +15,7 @@ import pandas as pd
 import streamlit.components.v1 as components
 
 from workflow import run_analysis
+from agents.retriever import clear_data_cache, data_cache_status
 from utils.ratios import RATIO_LABELS, RATIO_CATEGORIES
 from config import get_openai_key
 
@@ -84,6 +85,24 @@ with st.sidebar:
             st.rerun()
 
     st.divider()
+    st.subheader("🗄️ Data cache")
+    _cache = data_cache_status()
+    st.caption(
+        f"Yahoo Finance data is cached for ~6h, so repeated runs of the same "
+        f"ticker don't re-fetch. The analysis still re-runs every time — code and "
+        f"prompt changes always take effect. Currently cached: "
+        f"**{_cache['cached']}** ticker(s)."
+    )
+    force_fresh = st.checkbox(
+        "♻️ Fetch fresh data on next run (ignore cache)", value=False,
+        help="Pulls the latest statements from Yahoo Finance instead of the cache.",
+    )
+    if st.button("Clear data cache now", use_container_width=True):
+        n = clear_data_cache()
+        st.toast(f"Cleared {n} cached ticker(s).")
+        st.rerun()
+
+    st.divider()
     st.caption(
         "Data: Yahoo Finance · LLM: OpenAI (gpt-4o + vision) · "
         "Orchestration: LangGraph · UI: Streamlit"
@@ -109,6 +128,9 @@ if run:
     if not query.strip():
         st.warning("Please enter a query first.")
         st.stop()
+
+    if force_fresh:
+        clear_data_cache()
 
     with st.status("🤖 Running agent workflow...", expanded=True) as status:
         st.write("Workflow has 13 agents - this may take 30-90 seconds...")
