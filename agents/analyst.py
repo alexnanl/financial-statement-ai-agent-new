@@ -70,7 +70,28 @@ SECTION_BRIEFS = {
     "liquidity_leverage": (
         "Write the LIQUIDITY & LEVERAGE analysis for {ticker}. Discuss current/quick/"
         "cash ratios and debt/equity, debt/assets, interest coverage. Comment on "
-        "financial-risk posture."
+        "financial-risk posture. If the current ratio is below 1, note whether that "
+        "is a genuine concern or normal for a company with strong operating cash flow."
+    ),
+    "growth": (
+        "Write the GROWTH & SCALE analysis for {ticker}. Use the ABSOLUTE revenue, "
+        "net income, EPS and free-cash-flow figures and their year-over-year and CAGR "
+        "growth. Comment on the top-line and bottom-line trajectory and the scale of "
+        "the business. These are REPORTED HISTORICAL figures — never call them "
+        "'expected' or 'projected'."
+    ),
+    "valuation": (
+        "Write the VALUATION analysis for {ticker}. Discuss the P/E, P/S, P/B, "
+        "EV/EBITDA, FCF yield and dividend yield, and how they compare to the peer "
+        "average/median where given. Say whether the stock looks rich or cheap on "
+        "these multiples relative to peers. Do NOT give a price target or a buy/sell "
+        "recommendation; this is descriptive valuation context only."
+    ),
+    "capital_allocation": (
+        "Write the CAPITAL ALLOCATION analysis for {ticker}. Use the buyback, "
+        "dividend, total-cash-returned, payout-ratio and share-count-change figures. "
+        "Explain how aggressive buybacks shrink shareholders' equity and can inflate "
+        "ROE — connecting this to the DuPont/leverage story where relevant."
     ),
     "comparison": (
         "Write the SIDE-BY-SIDE COMPARISON analysis. Compare the companies head-to-"
@@ -79,7 +100,10 @@ SECTION_BRIEFS = {
     "risks": (
         "Write the RISKS & CAVEATS section. Note data-quality limitations, any "
         "volatile or deteriorating metrics, and what a reader should treat with "
-        "caution. End with a one-line reminder this is not investment advice."
+        "caution. All figures provided are REPORTED HISTORICAL values, not forecasts "
+        "— do NOT describe them as 'expected' or 'projected'. When a metric like ROE "
+        "declines because of LOWER leverage, say so plainly rather than framing it as "
+        "pure deterioration. End with a one-line reminder this is not investment advice."
     ),
 }
 
@@ -120,6 +144,39 @@ def _trend_block(ticker_trends: dict) -> str:
             "last": f"{t['last_year']}={round(t['last_value'], 4)}" if t['last_value'] else None,
         }
     return json.dumps(out, indent=2)
+
+
+def _growth_block(growth: dict) -> str:
+    out = {}
+    for key, g in (growth or {}).items():
+        if not g:
+            continue
+        out[g["label"]] = {
+            "first": f"{g['first_year']}={g['first']:.4g}" if g.get("first") is not None else None,
+            "last": f"{g['last_year']}={g['last']:.4g}" if g.get("last") is not None else None,
+            "cagr": round(g["cagr"], 4) if g.get("cagr") is not None else None,
+            "yoy": [round(s["yoy"], 4) for s in g["series"] if s["yoy"] is not None],
+        }
+    return json.dumps(out, indent=2)
+
+
+def _valuation_block(valuation: dict, val_peers: dict) -> str:
+    out = {"multiples": {k: (round(v, 4) if isinstance(v, (int, float)) else v)
+                         for k, v in (valuation or {}).items() if v is not None},
+           "vs_peers": {}}
+    for m, d in (val_peers or {}).items():
+        out["vs_peers"][d["label"]] = {
+            "company": round(d["company"], 4),
+            "peer_avg": round(d["peer_average"], 4),
+            "peer_median": round(d["peer_median"], 4),
+            "percentile_rank": d["percentile_rank"],
+        }
+    return json.dumps(out, indent=2)
+
+
+def _capalloc_block(cap: dict) -> str:
+    return json.dumps({k: (round(v, 4) if isinstance(v, (int, float)) else v)
+                       for k, v in (cap or {}).items() if v is not None}, indent=2)
 
 
 def _peer_block(ratios_dict: dict, peers: list) -> str:
@@ -163,6 +220,8 @@ def analyst_agent(state: AnalysisState) -> AnalysisState:
     peer_analysis = state.get("peer_analysis", {})
     peers_map = state.get("peers", {})
     comparison = state.get("comparison", {})
+    fundamentals = state.get("fundamentals", {})
+    valuation_peers = state.get("valuation_peers", {})
     charts = state.get("charts", {})
     analysis_type = state.get("analysis_type", "single")
     critique = state.get("critique", "")
@@ -216,6 +275,22 @@ def analyst_agent(state: AnalysisState) -> AnalysisState:
         sections[f"liquidity_leverage_{t}"] = _write_section(
             "liquidity_leverage", SECTION_BRIEFS["liquidity_leverage"].format(ticker=t),
             _ratios_block(by_year), [], critique)
+
+        # Fundamentals: growth, valuation, capital allocation (v3.1)
+        fund = fundamentals.get(t, {})
+        if fund.get("growth"):
+            sections[f"growth_{t}"] = _write_section(
+                "growth", SECTION_BRIEFS["growth"].format(ticker=t),
+                _growth_block(fund["growth"]), [], critique)
+        if fund.get("valuation"):
+            sections[f"valuation_{t}"] = _write_section(
+                "valuation", SECTION_BRIEFS["valuation"].format(ticker=t),
+                _valuation_block(fund["valuation"], valuation_peers.get(t, {})),
+                [], critique)
+        if fund.get("capital_allocation"):
+            sections[f"capital_allocation_{t}"] = _write_section(
+                "capital_allocation", SECTION_BRIEFS["capital_allocation"].format(ticker=t),
+                _capalloc_block(fund["capital_allocation"]), [], critique)
 
         # Peer comparison
         if t in peer_analysis:

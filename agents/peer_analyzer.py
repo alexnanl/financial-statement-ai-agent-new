@@ -27,6 +27,12 @@ def _percentile_rank(value: float, all_values: list[float]) -> float:
     return round(100 * below / len(all_values), 1)
 
 
+# Ratios that are distorted when a peer has negative shareholders' equity
+# (e.g. HP Inc.), because the equity denominator flips their sign and a single
+# garbage value poisons the peer average (the classic "ROE avg = -163%" bug).
+_EQUITY_SENSITIVE = {"roe", "equity_multiplier", "debt_to_equity"}
+
+
 def peer_analyzer_agent(state: AnalysisState) -> AnalysisState:
     log = state.get("log", [])
     peers_map = state.get("peers", {})
@@ -65,6 +71,7 @@ def peer_analyzer_agent(state: AnalysisState) -> AnalysisState:
                 continue
 
             peer_vals = {}
+            excluded = 0
             for peer in peer_list:
                 if peer not in peer_ratios:
                     continue
@@ -72,14 +79,22 @@ def peer_analyzer_agent(state: AnalysisState) -> AnalysisState:
                 if py is None:
                     continue
                 v = peer_ratios[peer][py].get(ratio_key)
-                if v is not None:
-                    peer_vals[peer] = v
+                if v is None:
+                    continue
+                # Drop equity-distorted peers (negative book equity) from
+                # equity-sensitive ratios so they don't poison the average.
+                if ratio_key in _EQUITY_SENSITIVE:
+                    peer_equity = peer_ratios[peer][py].get("_raw", {}).get("total_equity")
+                    if peer_equity is not None and peer_equity <= 0:
+                        excluded += 1
+                        continue
+                peer_vals[peer] = v
 
             if not peer_vals:
                 continue
 
             peer_values_list = list(peer_vals.values())
-            analysis_for_primary[ratio_key] = {
+            entry = {
                 "primary_value": primary_val,
                 "peer_average": statistics.mean(peer_values_list),
                 "peer_median": statistics.median(peer_values_list),
@@ -89,6 +104,9 @@ def peer_analyzer_agent(state: AnalysisState) -> AnalysisState:
                 "peer_values": peer_vals,
                 "percentile_rank": _percentile_rank(primary_val, peer_values_list),
             }
+            if excluded:
+                entry["excluded_peers"] = excluded
+            analysis_for_primary[ratio_key] = entry
 
         peer_analysis[primary] = analysis_for_primary
         log.append(f"Peer Analyzer: {primary} benchmarked on "

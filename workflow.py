@@ -18,6 +18,7 @@ from agents.trend_analyzer import trend_analyzer_agent
 from agents.comparator import comparator_agent
 from agents.peer_selector import peer_selector_agent
 from agents.peer_analyzer import peer_analyzer_agent
+from agents.fundamentals import fundamentals_agent
 from agents.chart_builder import chart_builder_agent
 from agents.analyst import analyst_agent
 from agents.critic import critic_agent
@@ -55,6 +56,7 @@ def build_workflow():
     g.add_node("peer_selector", peer_selector_agent)
     g.add_node("peer_retriever", peer_retriever_agent)
     g.add_node("peer_analyzer", peer_analyzer_agent)
+    g.add_node("fundamentals", fundamentals_agent)
     g.add_node("chart_builder", chart_builder_agent)
     g.add_node("analyst", analyst_agent)
     g.add_node("critic", critic_agent)
@@ -75,7 +77,8 @@ def build_workflow():
     g.add_edge("comparator", "peer_selector")
     g.add_edge("peer_selector", "peer_retriever")
     g.add_edge("peer_retriever", "peer_analyzer")
-    g.add_edge("peer_analyzer", "chart_builder")
+    g.add_edge("peer_analyzer", "fundamentals")
+    g.add_edge("fundamentals", "chart_builder")
     g.add_edge("chart_builder", "analyst")
     g.add_edge("analyst", "critic")
 

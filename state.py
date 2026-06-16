@@ -37,6 +37,10 @@ class AnalysisState(TypedDict, total=False):
     # --- Peer Analyzer ---
     peer_analysis: dict[str, Any]
 
+    # --- Fundamentals (valuation, growth, capital allocation) ---
+    fundamentals: dict[str, Any]      # {ticker: {valuation, growth, capital_allocation}}
+    valuation_peers: dict[str, Any]   # {primary: {metric: {company, peer_avg, peer_median, percentile, ...}}}
+
     # --- Charts ---
     charts: dict[str, str]        # {chart_name: filepath}
 

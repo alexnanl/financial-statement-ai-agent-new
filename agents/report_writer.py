@@ -142,6 +142,86 @@ def _peer_table(peer_for_primary: dict) -> dict | None:
     return _table(headers, rows) if rows else None
 
 
+def _fmt_money(val) -> str:
+    if val is None:
+        return "—"
+    a = abs(val)
+    if a >= 1e12:
+        return f"${val/1e12:.2f}T"
+    if a >= 1e9:
+        return f"${val/1e9:.1f}B"
+    if a >= 1e6:
+        return f"${val/1e6:.1f}M"
+    return f"${val:,.0f}"
+
+
+def _fmt_x(val) -> str:
+    return "—" if val is None else f"{val:.1f}×"
+
+
+def _growth_table(growth: dict) -> dict | None:
+    rows = []
+    for key in ["revenue", "net_income", "eps", "fcf"]:
+        g = growth.get(key)
+        if not g:
+            continue
+        is_eps = key == "eps"
+        first = f"${g['first']:.2f}" if is_eps else _fmt_money(g["first"])
+        last = f"${g['last']:.2f}" if is_eps else _fmt_money(g["last"])
+        cagr = f"{g['cagr']*100:.1f}%" if g.get("cagr") is not None else "—"
+        rows.append([g["label"], f"{g['first_year']}: {first}",
+                     f"{g['last_year']}: {last}", cagr])
+    return _table(["Metric", "First", "Latest", "CAGR"], rows) if rows else None
+
+
+def _valuation_table(valuation: dict, val_peers: dict) -> dict | None:
+    defs = [
+        ("pe", "P / E", "x"), ("ps", "P / S", "x"), ("pb", "P / B", "x"),
+        ("ev_ebitda", "EV / EBITDA", "x"),
+        ("fcf_yield", "FCF Yield", "pct"),
+        ("earnings_yield", "Earnings Yield", "pct"),
+        ("dividend_yield", "Dividend Yield", "pct"),
+    ]
+    has_peers = bool(val_peers)
+    headers = ["Metric", "Company"] + (["Peer Avg", "Peer Median", "Percentile"]
+                                       if has_peers else [])
+    rows = []
+    for key, label, kind in defs:
+        v = valuation.get(key)
+        d = val_peers.get(key) if has_peers else None
+        if v is None and not d:
+            continue
+        comp = _fmt_x(v) if kind == "x" else _fmt(v, as_pct=True)
+        row = [label, comp]
+        if has_peers:
+            if d:
+                pa = _fmt_x(d["peer_average"]) if kind == "x" else _fmt(d["peer_average"], as_pct=True)
+                pm = _fmt_x(d["peer_median"]) if kind == "x" else _fmt(d["peer_median"], as_pct=True)
+                row += [pa, pm, f"{d['percentile_rank']:.0f}th"]
+            else:
+                row += ["—", "—", "—"]
+        rows.append(row)
+    return _table(headers, rows) if rows else None
+
+
+def _capalloc_table(cap: dict) -> dict | None:
+    def pct(k):
+        v = cap.get(k)
+        return "—" if v is None else f"{v*100:.1f}%"
+
+    rows = [
+        ["Buybacks (latest FY)", _fmt_money(cap.get("buybacks"))],
+        ["Dividends paid (latest FY)", _fmt_money(cap.get("dividends"))],
+        ["Total returned to shareholders", _fmt_money(cap.get("total_returned"))],
+        ["Dividend payout ratio", pct("payout_ratio")],
+        ["Total payout ratio (div + buyback)", pct("total_payout_ratio")],
+        ["Shareholder yield", pct("shareholder_yield")],
+    ]
+    if cap.get("share_count_change") is not None:
+        rows.append(["Share count change (period)", pct("share_count_change")])
+    return _table(["Capital allocation", "Value"], rows)
+
+
 def _comparison_table(comparison: dict) -> dict | None:
     rankings = comparison.get("rankings", {})
     snapshots = comparison.get("snapshots", {})
@@ -167,6 +247,8 @@ def _build_blocks(state: AnalysisState) -> list:
     trends = state.get("trends", {})
     peers_map = state.get("peers", {})
     peer_analysis = state.get("peer_analysis", {})
+    fundamentals = state.get("fundamentals", {})
+    valuation_peers = state.get("valuation_peers", {})
     comparison = state.get("comparison", {})
     sections = state.get("section_analysis", {})
     critique = state.get("critique", "")
@@ -261,6 +343,16 @@ def _build_blocks(state: AnalysisState) -> list:
         blocks.append(_h(3, f"{t}: Financial Ratios"))
         blocks.append(_ratio_table(by_year))
 
+        fund = fundamentals.get(t, {})
+
+        # Growth & Scale (absolute figures + growth rates)
+        if fund.get("growth"):
+            gt = _growth_table(fund["growth"])
+            if gt:
+                blocks.append(_h(3, f"{t}: Growth & Scale"))
+                blocks.append(gt)
+                blocks += _section_text(sections, f"growth_{t}")
+
         # Profitability
         blocks.append(_h(3, f"{t}: Profitability"))
         if f"profitability_{t}" in charts:
@@ -293,12 +385,33 @@ def _build_blocks(state: AnalysisState) -> list:
         blocks.append(_h(3, f"{t}: Liquidity & Leverage"))
         blocks += _section_text(sections, f"liquidity_leverage_{t}")
 
+        # Valuation (multiples + peer comparison)
+        if fund.get("valuation"):
+            vt = _valuation_table(fund["valuation"], valuation_peers.get(t, {}))
+            if vt:
+                blocks.append(_h(3, f"{t}: Valuation"))
+                blocks.append(vt)
+                blocks += _section_text(sections, f"valuation_{t}")
+
+        # Capital Allocation (buybacks, dividends, share count)
+        if fund.get("capital_allocation"):
+            ct = _capalloc_table(fund["capital_allocation"])
+            if ct:
+                blocks.append(_h(3, f"{t}: Capital Allocation"))
+                blocks.append(ct)
+                blocks += _section_text(sections, f"capital_allocation_{t}")
+
         # Peer benchmarking
         if t in peer_analysis:
             pt = _peer_table(peer_analysis[t])
             if pt:
                 blocks.append(_h(3, f"{t}: Peer Benchmarking"))
                 blocks.append(pt)
+                if any(d.get("excluded_peers") for d in peer_analysis[t].values()):
+                    blocks.append(_meta(
+                        "Note: peers with negative book equity were excluded from "
+                        "equity-based ratios (ROE, equity multiplier, debt/equity) so a "
+                        "single distorted value does not poison the peer average."))
                 pchart_keys = [k for k in charts if k.startswith(f"peer_{t}_")]
                 for ck in pchart_keys[:3]:
                     blocks.append(_chart(charts[ck]))
@@ -337,12 +450,15 @@ def _build_blocks(state: AnalysisState) -> list:
     blocks.append(_p(
         "This report was generated by a multi-agent workflow: Planner → "
         "Retriever → Peer Selector → Peer Retriever → Validator → Ratios → "
-        "Trend Analyzer → Comparator → Peer Analyzer → Chart Builder → Analyst "
+        "Trend Analyzer → Comparator → Peer Analyzer → Fundamentals "
+        "(valuation, growth, capital allocation) → Chart Builder → Analyst "
         "(vision-enabled, section by section) → Critic → Report Writer. Data "
-        "source: Yahoo Finance. Ratios and the DuPont decomposition are "
-        "computed deterministically; the per-section narrative is generated by "
-        "an AI analyst from the numerical tables and chart images, then "
-        "reviewed by a critic agent."
+        "source: Yahoo Finance. Ratios, the DuPont decomposition, valuation "
+        "multiples, growth and capital-allocation figures are computed "
+        "deterministically; the per-section narrative is generated by an AI "
+        "analyst from the numerical tables and chart images, then reviewed by a "
+        "critic agent. Valuation multiples use latest-fiscal-year fundamentals "
+        "against current market capitalization (a trailing approximation)."
     ))
     blocks.append(_meta("Not investment advice."))
 
