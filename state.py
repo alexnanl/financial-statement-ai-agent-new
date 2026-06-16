@@ -41,6 +41,9 @@ class AnalysisState(TypedDict, total=False):
     fundamentals: dict[str, Any]      # {ticker: {valuation, growth, capital_allocation}}
     valuation_peers: dict[str, Any]   # {primary: {metric: {company, peer_avg, peer_median, percentile, ...}}}
 
+    # --- Flags & Signals (deterministic strengths / watch / concerns) ---
+    flags: dict[str, Any]             # {ticker: {positive: [...], watch: [...], concern: [...], summary: {...}}}
+
     # --- Charts ---
     charts: dict[str, str]        # {chart_name: filepath}
 

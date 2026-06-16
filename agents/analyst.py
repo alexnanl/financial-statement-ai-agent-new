@@ -87,6 +87,13 @@ SECTION_BRIEFS = {
         "these multiples relative to peers. Do NOT give a price target or a buy/sell "
         "recommendation; this is descriptive valuation context only."
     ),
+    "flags": (
+        "Write a brief STRENGTHS & CONCERNS synthesis for {ticker}. You are given a "
+        "deterministic list of positive signals, watch items and concerns, each with "
+        "exact numbers, plus an overall tilt. In 2-3 sentences: lead with the net read "
+        "(healthy / mixed / cautious), then name the 1-2 biggest strengths and the 1-2 "
+        "biggest concerns. Do NOT invent any signal that is not in the provided list."
+    ),
     "capital_allocation": (
         "Write the CAPITAL ALLOCATION analysis for {ticker}. Use the buyback, "
         "dividend, total-cash-returned, payout-ratio and share-count-change figures. "
@@ -174,6 +181,13 @@ def _valuation_block(valuation: dict, val_peers: dict) -> str:
     return json.dumps(out, indent=2)
 
 
+def _flags_block(flags: dict) -> str:
+    out = {"overall_tilt": flags.get("summary", {}).get("tilt")}
+    for key in ("positive", "watch", "concern"):
+        out[key] = [f"{f['title']}: {f['detail']}" for f in flags.get(key, [])]
+    return json.dumps(out, indent=2)
+
+
 def _capalloc_block(cap: dict) -> str:
     return json.dumps({k: (round(v, 4) if isinstance(v, (int, float)) else v)
                        for k, v in (cap or {}).items() if v is not None}, indent=2)
@@ -222,6 +236,7 @@ def analyst_agent(state: AnalysisState) -> AnalysisState:
     comparison = state.get("comparison", {})
     fundamentals = state.get("fundamentals", {})
     valuation_peers = state.get("valuation_peers", {})
+    flags = state.get("flags", {})
     charts = state.get("charts", {})
     analysis_type = state.get("analysis_type", "single")
     critique = state.get("critique", "")
@@ -249,6 +264,12 @@ def analyst_agent(state: AnalysisState) -> AnalysisState:
     # ----- Per-ticker sections -----
     for t in tickers:
         by_year = ratios[t]
+
+        # Strengths & Concerns synthesis (grounded in deterministic flags)
+        if flags.get(t):
+            sections[f"flags_{t}"] = _write_section(
+                "flags", SECTION_BRIEFS["flags"].format(ticker=t),
+                _flags_block(flags[t]), [], critique)
 
         # Profitability
         prof_charts = [charts[k] for k in [f"profitability_{t}"] if k in charts]
@@ -317,10 +338,11 @@ def analyst_agent(state: AnalysisState) -> AnalysisState:
             "comparison", SECTION_BRIEFS["comparison"],
             json.dumps(comp_data, indent=2)[:6000], comp_charts, critique)
 
-    # ----- Risks & caveats -----
+    # ----- Risks & caveats (grounded in the deterministic flags) -----
     risk_data = {
         "data_quality": state.get("data_quality", {}),
         "trends": {t: _trend_block(trends.get(t, {})) for t in tickers},
+        "flagged_concerns": {t: _flags_block(flags[t]) for t in tickers if flags.get(t)},
     }
     sections["risks"] = _write_section(
         "risks", SECTION_BRIEFS["risks"],
