@@ -29,10 +29,83 @@ def data_cache_status() -> dict:
             "tickers": sorted(_DATA_CACHE.keys())}
 
 
-def _fetch_one(ticker: str):
-    """Fetch a single ticker's statements. Returns (data_dict, error_str).
+def _row_latest(df, names):
+    """Latest-column value for the first matching row (no pandas import needed)."""
+    if df is None or getattr(df, "empty", True):
+        return None
+    for n in names:
+        if n in df.index:
+            try:
+                v = df.loc[n, df.columns[0]]
+                if v is not None and v == v:  # v == v is False for NaN
+                    return float(v)
+            except Exception:
+                continue
+    return None
 
-    Serves a cached copy when one exists and is younger than the TTL.
+
+def _fast_get(fi, *keys):
+    """Read a value from yfinance fast_info, tolerant of key/attr styles."""
+    if fi is None:
+        return None
+    for k in keys:
+        v = None
+        try:
+            v = fi[k]
+        except Exception:
+            try:
+                v = getattr(fi, k)
+            except Exception:
+                v = None
+        if v is not None:
+            return v
+    return None
+
+
+def _resolve_meta(t, ticker, income, balance):
+    """Build the info dict, resilient to Yahoo's flaky .info endpoint.
+
+    Market cap (and name/sector) often come back empty from t.info even when
+    the statements load fine — which silently dropped the Valuation section.
+    Fall back to t.fast_info, then to shares x price, so market cap is
+    available whenever the statements are.
+    """
+    try:
+        info = t.info or {}
+    except Exception:
+        info = {}
+    try:
+        fi = t.fast_info
+    except Exception:
+        fi = None
+
+    mcap = info.get("marketCap") or _fast_get(fi, "market_cap", "marketCap")
+    if not mcap:
+        price = _fast_get(fi, "last_price", "lastPrice", "previous_close", "previousClose")
+        shares = (_fast_get(fi, "shares", "shares_outstanding")
+                  or _row_latest(balance, ["Ordinary Shares Number", "Share Issued"])
+                  or _row_latest(income, ["Diluted Average Shares", "Basic Average Shares"]))
+        if price and shares:
+            try:
+                mcap = float(price) * float(shares)
+            except (TypeError, ValueError):
+                mcap = None
+
+    return {
+        "longName": info.get("longName") or info.get("shortName") or ticker,
+        "sector": info.get("sector") or "Unknown",
+        "industry": info.get("industry") or "Unknown",
+        "currency": info.get("currency") or _fast_get(fi, "currency") or "USD",
+        "marketCap": mcap,
+        "country": info.get("country") or "Unknown",
+    }
+
+
+def _fetch_one(ticker: str):
+    """Fetch a single ticker's statements + meta. Returns (data_dict, error_str).
+
+    Serves a cached copy when one exists and is younger than the TTL. Retries
+    the statement fetch once to ride out transient Yahoo throttling.
     """
     cached = _DATA_CACHE.get(ticker)
     if cached is not None:
@@ -40,36 +113,30 @@ def _fetch_one(ticker: str):
         if time.time() - fetched_at < _CACHE_TTL_SECONDS:
             return data, None
 
-    try:
-        t = yf.Ticker(ticker)
-        income = t.income_stmt
-        balance = t.balance_sheet
-        cash = t.cashflow
+    last_err = None
+    for attempt in range(2):
         try:
-            info = t.info or {}
-        except Exception:
-            info = {}
+            t = yf.Ticker(ticker)
+            income = t.income_stmt
+            if income is None or income.empty:
+                last_err = f"{ticker}: no income statement available"
+            else:
+                balance = t.balance_sheet
+                cash = t.cashflow
+                data = {
+                    "income_stmt": income,
+                    "balance_sheet": balance,
+                    "cash_flow": cash,
+                    "info": _resolve_meta(t, ticker, income, balance),
+                }
+                _DATA_CACHE[ticker] = (time.time(), data)  # cache on success only
+                return data, None
+        except Exception as e:
+            last_err = f"{ticker}: {type(e).__name__}: {e}"
+        if attempt == 0:
+            time.sleep(1.0)
 
-        if income is None or income.empty:
-            return None, f"{ticker}: no income statement available"
-
-        data = {
-            "income_stmt": income,
-            "balance_sheet": balance,
-            "cash_flow": cash,
-            "info": {
-                "longName": info.get("longName") or info.get("shortName") or ticker,
-                "sector": info.get("sector", "Unknown"),
-                "industry": info.get("industry", "Unknown"),
-                "currency": info.get("currency", "USD"),
-                "marketCap": info.get("marketCap"),
-                "country": info.get("country", "Unknown"),
-            },
-        }
-        _DATA_CACHE[ticker] = (time.time(), data)   # cache on success only
-        return data, None
-    except Exception as e:
-        return None, f"{ticker}: {type(e).__name__}: {e}"
+    return None, last_err
 
 
 def retriever_agent(state: AnalysisState) -> AnalysisState:
