@@ -53,6 +53,10 @@ st.markdown('<p class="subtitle">Multi-agent workflow with DuPont · Trend · '
 # ---------- API key check (silent unless missing) ----------
 api_key_present = bool(get_openai_key())
 
+def _use_example(q: str) -> None:
+    st.session_state["query_text"] = q
+
+
 # ---------- Sidebar ----------
 with st.sidebar:
     st.header("⚙️ Status")
@@ -80,9 +84,10 @@ with st.sidebar:
         "Compare NVDA, AMD, and INTC financial performance with peer benchmarks",
     ]
     for ex in examples:
-        if st.button(ex, key=f"ex_{ex}", use_container_width=True):
-            st.session_state["pending_query"] = ex
-            st.rerun()
+        # The callback writes straight into the query box's state, so the text
+        # stays there when Run Analysis is clicked.
+        st.button(ex, key=f"ex_{ex}", use_container_width=True,
+                  on_click=_use_example, args=(ex,))
 
     st.divider()
     st.subheader("🗄️ Data cache")
@@ -111,7 +116,7 @@ with st.sidebar:
 # ---------- Query input ----------
 query = st.text_area(
     "What would you like to analyze?",
-    value=st.session_state.pop("pending_query", ""),
+    key="query_text",
     height=80,
     placeholder="e.g., Compare Apple and Microsoft with DuPont decomposition and peer benchmarks",
 )
